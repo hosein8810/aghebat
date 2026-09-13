@@ -88,6 +88,39 @@ CREATE TABLE IF NOT EXISTS ledger (
     ts      INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS bot_admins (
+    chat_id     INTEGER NOT NULL,
+    user_id     INTEGER NOT NULL,
+    full_name   TEXT    NOT NULL DEFAULT '',
+    username    TEXT    NOT NULL DEFAULT '',
+    promoted_by INTEGER NOT NULL DEFAULT 0,
+    promoted_at INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (chat_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS activated_users (
+    user_id      INTEGER PRIMARY KEY,
+    full_name    TEXT    NOT NULL DEFAULT '',
+    username     TEXT    NOT NULL DEFAULT '',
+    activated_by INTEGER NOT NULL DEFAULT 0,
+    activated_at INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS ads (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    text          TEXT    NOT NULL,
+    media_file_id TEXT    NOT NULL DEFAULT '',
+    media_type    TEXT    NOT NULL DEFAULT '',
+    active        INTEGER NOT NULL DEFAULT 1,
+    sent_count    INTEGER NOT NULL DEFAULT 0,
+    created_at    INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_members_balance ON members(chat_id, balance DESC);
 CREATE INDEX IF NOT EXISTS idx_ledger_user ON ledger(chat_id, user_id, ts DESC);
 """
@@ -423,3 +456,103 @@ class Database:
             "messages": int(msgs["c"]) if msgs else 0,
             "tasks": int(tasks["c"]) if tasks else 0,
         }
+
+    # ------------------------------------------------------------ bot admins
+    async def add_bot_admin(
+        self,
+        chat_id: int,
+        user_id: int,
+        full_name: str = "",
+        username: str = "",
+        promoted_by: int = 0,
+    ) -> None:
+        """کاربر را به ادمین بات همان گروه تبدیل می‌کند (تکرار، بازنویسی می‌شود)."""
+        await self.execute(
+            "INSERT OR REPLACE INTO bot_admins"
+            " (chat_id, user_id, full_name, username, promoted_by, promoted_at)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (chat_id, user_id, full_name, username, promoted_by, int(time.time())),
+        )
+
+    async def remove_bot_admin(self, chat_id: int, user_id: int) -> None:
+        await self.execute(
+            "DELETE FROM bot_admins WHERE chat_id = ? AND user_id = ?", (chat_id, user_id)
+        )
+
+    async def bot_admins(self, chat_id: int) -> list[aiosqlite.Row]:
+        return await self.fetchall(
+            "SELECT * FROM bot_admins WHERE chat_id = ? ORDER BY promoted_at ASC", (chat_id,)
+        )
+
+    async def is_bot_admin(self, chat_id: int, user_id: int) -> bool:
+        row = await self.fetchone(
+            "SELECT 1 AS ok FROM bot_admins WHERE chat_id = ? AND user_id = ?", (chat_id, user_id)
+        )
+        return row is not None
+
+    # -------------------------------------------------------- activated users
+    async def activate_user(
+        self,
+        user_id: int,
+        full_name: str = "",
+        username: str = "",
+        activated_by: int = 0,
+    ) -> None:
+        """کاربر را برای استفاده از بات فعال می‌کند."""
+        await self.execute(
+            "INSERT OR REPLACE INTO activated_users"
+            " (user_id, full_name, username, activated_by, activated_at)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (user_id, full_name, username, activated_by, int(time.time())),
+        )
+
+    async def deactivate_user(self, user_id: int) -> None:
+        await self.execute("DELETE FROM activated_users WHERE user_id = ?", (user_id,))
+
+    async def is_activated(self, user_id: int) -> bool:
+        row = await self.fetchone("SELECT 1 AS ok FROM activated_users WHERE user_id = ?", (user_id,))
+        return row is not None
+
+    async def activated_count(self) -> int:
+        row = await self.fetchone("SELECT COUNT(*) AS c FROM activated_users")
+        return int(row["c"]) if row else 0
+
+    # ---------------------------------------------------------------- ads
+    async def add_ad(self, text: str, media_file_id: str = "", media_type: str = "") -> int:
+        """تبلیغ جدید می‌سازد و شناسه‌اش را برمی‌گرداند."""
+        cur = await self.conn.execute(
+            "INSERT INTO ads (text, media_file_id, media_type, created_at) VALUES (?, ?, ?, ?)",
+            (text, media_file_id, media_type, int(time.time())),
+        )
+        await self.conn.commit()
+        return int(cur.lastrowid or 0)
+
+    async def ads(self, only_active: bool = False) -> list[aiosqlite.Row]:
+        sql = "SELECT * FROM ads"
+        if only_active:
+            sql += " WHERE active = 1"
+        return await self.fetchall(sql + " ORDER BY id ASC")
+
+    async def get_ad(self, ad_id: int) -> aiosqlite.Row | None:
+        return await self.fetchone("SELECT * FROM ads WHERE id = ?", (ad_id,))
+
+    async def set_ad_active(self, ad_id: int, active: bool) -> None:
+        await self.execute("UPDATE ads SET active = ? WHERE id = ?", (int(active), ad_id))
+
+    async def delete_ad(self, ad_id: int) -> None:
+        await self.execute("DELETE FROM ads WHERE id = ?", (ad_id,))
+
+    async def bump_ad_sent(self, ad_id: int) -> None:
+        await self.execute("UPDATE ads SET sent_count = sent_count + 1 WHERE id = ?", (ad_id,))
+
+    # --------------------------------------------------------------- settings
+    async def get_setting(self, key: str, default: str | None = None) -> str | None:
+        row = await self.fetchone("SELECT value FROM settings WHERE key = ?", (key,))
+        return row["value"] if row else default
+
+    async def set_setting(self, key: str, value: str) -> None:
+        await self.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?)"
+            " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )

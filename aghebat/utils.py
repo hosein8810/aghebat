@@ -79,3 +79,13 @@ def format_number(value: int) -> str:
 
 def signed(value: int) -> str:
     return f"+{value:,}" if value > 0 else f"{value:,}"
+
+
+def owner_contact_url(contact: str) -> str:
+    """مقدار OWNER_CONTACT را به لینک قابل کلیک t.me تبدیل می‌کند."""
+    value = contact.strip()
+    if value.startswith(("http://", "https://")):
+        return value
+    if value.startswith("t.me/"):
+        return f"https://{value}"
+    return f"https://t.me/{value.lstrip('@')}"

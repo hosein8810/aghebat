@@ -11,7 +11,7 @@ from ..config import Config
 from ..db import Database
 from ..services.ranks import PERM_FIELDS, PERM_LABELS, load_ranks, sync_member_rank
 from ..texts import DEFAULT_TEXTS
-from ..utils import is_chat_admin, is_group, mention, parse_int, safe, signed, target_user
+from ..utils import is_group, mention, parse_int, safe, signed, target_user
 
 router = Router(name="admin")
 
@@ -32,24 +32,27 @@ PERM_ALIASES: dict[str, str] = {
 }
 
 
-async def _guard(message: Message, bot: Bot, config: Config) -> bool:
-    """اجازه اجرای دستور ادمینی را بررسی می‌کند."""
+async def _guard(message: Message, db: Database, config: Config) -> bool:
+    """اجازه اجرای دستور ادمینی را بررسی می‌کند (مالک یا ادمین بات همین گروه)."""
     if not is_group(message.chat):
         await message.reply("⚙️ این دستور فقط داخل گروه کار می‌کنه.")
         return False
     user = message.from_user
     if user is None:
         return False
-    if config.is_owner(user.id) or await is_chat_admin(bot, message.chat.id, user.id):
+    if config.is_owner(user.id) or await db.is_bot_admin(message.chat.id, user.id):
         return True
-    await message.reply("🚫 فقط ادمین‌های گروه می‌تونن این دستور رو اجرا کنن!")
+    await message.reply(
+        "🚫 این دستورها فقط مخصوص <b>ادمین‌های بات</b> است!\n"
+        "ادمین بات کسی است که مالک بات با دستور <code>/promote</code> ترفیعش داده."
+    )
     return False
 
 
 @router.message(Command("settings", "panel"))
 async def cmd_settings(message: Message, bot: Bot, db: Database, config: Config) -> None:
     """نمایش تنظیمات فعلی گروه."""
-    if not await _guard(message, bot, config):
+    if not await _guard(message, db, config):
         return
     chat = await db.ensure_chat(message.chat.id, message.chat.title or "")
     ranks = await load_ranks(db, message.chat.id)
@@ -85,7 +88,7 @@ async def cmd_setrange(
     message: Message, bot: Bot, db: Database, config: Config, command: CommandObject
 ) -> None:
     """تنظیم بازه عدد تصادفی روزانه (می‌تواند منفی باشد)."""
-    if not await _guard(message, bot, config):
+    if not await _guard(message, db, config):
         return
     parts = (command.args or "").split()
     if len(parts) != 2:
@@ -108,7 +111,7 @@ async def cmd_setunit(
     message: Message, bot: Bot, db: Database, config: Config, command: CommandObject
 ) -> None:
     """تنظیم نام و ایموجی واحد امتیاز."""
-    if not await _guard(message, bot, config):
+    if not await _guard(message, db, config):
         return
     parts = (command.args or "").split()
     if not parts:
@@ -127,7 +130,7 @@ async def cmd_setmsgpoints(
     message: Message, bot: Bot, db: Database, config: Config, command: CommandObject
 ) -> None:
     """تنظیم امتیاز هر پیام و فاصله زمانی آن."""
-    if not await _guard(message, bot, config):
+    if not await _guard(message, db, config):
         return
     parts = (command.args or "").split()
     if not parts:
@@ -151,7 +154,7 @@ async def cmd_toggle(
     message: Message, bot: Bot, db: Database, config: Config, command: CommandObject
 ) -> None:
     """روشن/خاموش کردن قابلیت‌های گروه."""
-    if not await _guard(message, bot, config):
+    if not await _guard(message, db, config):
         return
     key = (command.args or "").strip().lower()
     mapping = {"enforce": "enforce_ranks", "fun": "fun_mode", "bot": "enabled"}
@@ -170,7 +173,7 @@ async def cmd_addrank(
     message: Message, bot: Bot, db: Database, config: Config, command: CommandObject
 ) -> None:
     """افزودن رتبه جدید با حداقل موجودی و دسترسی‌ها."""
-    if not await _guard(message, bot, config):
+    if not await _guard(message, db, config):
         return
     parts = (command.args or "").split()
     if len(parts) < 3:
@@ -203,7 +206,7 @@ async def cmd_delrank(
     message: Message, bot: Bot, db: Database, config: Config, command: CommandObject
 ) -> None:
     """حذف یک رتبه با شناسه."""
-    if not await _guard(message, bot, config):
+    if not await _guard(message, db, config):
         return
     rank_id = parse_int(command.args or "")
     if rank_id is None:
@@ -218,7 +221,7 @@ async def cmd_delrank(
 @router.message(Command("resetranks"))
 async def cmd_resetranks(message: Message, bot: Bot, db: Database, config: Config) -> None:
     """بازگرداندن رتبه‌ها به حالت پیش‌فرض."""
-    if not await _guard(message, bot, config):
+    if not await _guard(message, db, config):
         return
     await db.reset_ranks(message.chat.id)
     await message.reply("♻️ رتبه‌ها به حالت پیش‌فرض برگشتند.")
@@ -227,7 +230,7 @@ async def cmd_resetranks(message: Message, bot: Bot, db: Database, config: Confi
 @router.message(Command("texts"))
 async def cmd_texts(message: Message, bot: Bot, db: Database, config: Config) -> None:
     """کلیدهای متنی قابل تنظیم."""
-    if not await _guard(message, bot, config):
+    if not await _guard(message, db, config):
         return
     custom = await db.all_texts(message.chat.id)
     lines = ["📝 <b>متن‌های قابل تنظیم</b>", ""]
@@ -251,7 +254,7 @@ async def cmd_settext(
     message: Message, bot: Bot, db: Database, config: Config, command: CommandObject
 ) -> None:
     """تنظیم متن سفارشی برای یک کلید."""
-    if not await _guard(message, bot, config):
+    if not await _guard(message, db, config):
         return
     args = (command.args or "").split(maxsplit=1)
     if len(args) < 2:
@@ -271,7 +274,7 @@ async def cmd_deltext(
     message: Message, bot: Bot, db: Database, config: Config, command: CommandObject
 ) -> None:
     """بازگرداندن یک متن به حالت پیش‌فرض."""
-    if not await _guard(message, bot, config):
+    if not await _guard(message, db, config):
         return
     key = (command.args or "").strip()
     if key not in DEFAULT_TEXTS:
@@ -285,7 +288,7 @@ async def _adjust(
     message: Message, bot: Bot, db: Database, config: Config, raw_amount: str, sign: int
 ) -> None:
     """کم/زیاد کردن موجودی کاربر هدف."""
-    if not await _guard(message, bot, config):
+    if not await _guard(message, db, config):
         return
     user = target_user(message)
     if user is None:
@@ -331,7 +334,7 @@ async def cmd_setbalance(
     message: Message, bot: Bot, db: Database, config: Config, command: CommandObject
 ) -> None:
     """تنظیم مستقیم موجودی کاربر."""
-    if not await _guard(message, bot, config):
+    if not await _guard(message, db, config):
         return
     user = target_user(message)
     amount = parse_int(command.args or "")
@@ -353,7 +356,7 @@ async def cmd_setbalance(
 @router.message(Command("syncall"))
 async def cmd_syncall(message: Message, bot: Bot, db: Database, config: Config) -> None:
     """هماهنگ‌سازی دسترسی همه اعضای ثبت‌شده با رتبه فعلی‌شان."""
-    if not await _guard(message, bot, config):
+    if not await _guard(message, db, config):
         return
     chat = await db.ensure_chat(message.chat.id, message.chat.title or "")
     rows = await db.leaderboard(message.chat.id, "balance", 500)

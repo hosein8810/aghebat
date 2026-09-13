@@ -13,8 +13,10 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aghebat.config import Config
 from aghebat.db import Database
 from aghebat.handlers import build_router
+from aghebat.middlewares.access import AccessMiddleware
 from aghebat.middlewares.activity import ActivityMiddleware
 from aghebat.middlewares.deps import DepsMiddleware
+from aghebat.services.ads import ads_loop
 
 logger = logging.getLogger(__name__)
 
@@ -36,15 +38,23 @@ async def run() -> None:
     dp = Dispatcher(storage=MemoryStorage())
     dp.update.outer_middleware(DepsMiddleware(db, config))
     dp.message.middleware(ActivityMiddleware())
+    # سد فعال‌سازی باید قبل از انتخاب هندلر اجرا شود (میدل‌ور بیرونی).
+    dp.message.outer_middleware(AccessMiddleware(db, config))
     dp.include_router(build_router())
 
     me = await bot.get_me()
     logger.info("بات %s (@%s) آماده است.", config.bot_name, me.username)
 
+    ads_task = asyncio.create_task(ads_loop(bot, db, config))
     try:
         await bot.delete_webhook(drop_pending_updates=True)
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:
+        ads_task.cancel()
+        try:
+            await ads_task
+        except asyncio.CancelledError:
+            pass
         await db.close()
         await bot.session.close()
 

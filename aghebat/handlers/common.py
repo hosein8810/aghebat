@@ -3,7 +3,12 @@ from __future__ import annotations
 
 from aiogram import Bot, F, Router
 from aiogram.filters import Command, CommandStart
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 
 from ..config import Config
 from ..db import Database
@@ -12,35 +17,94 @@ from ..utils import is_group, owner_contact_url, safe
 
 router = Router(name="common")
 
-HELP_TEXT = (
-    "🌱 <b>راهنمای بات عاقبت</b>\n\n"
-    "<b>دستورات همگانی:</b>\n"
-    "/daily — دریافت عاقبت روزانه 🎲\n"
-    "/me — کارنامه و رتبه من 📊\n"
-    "/top — جدول برترین‌ها 🏆\n"
-    "/active — فعال‌ترین اعضا 💬\n"
-    "/ranks — نردبان رتبه‌ها 🪜\n"
-    "/tasks — تسک‌ها و جایزه‌ها 🎯\n"
-    "/history — تاریخچه تغییرات 🧾\n"
-    "/dice — شرط‌بندی شانسی 🎰\n"
-    "/fal — فال روزانه 🔮\n"
-    "/gift — هدیه دادن به دوستان 🎁\n\n"
-    "<b>دستورات مدیریت گروه (فقط ادمین‌های بات):</b>\n"
-    "/settings — پنل تنظیمات ⚙️\n"
-    "/setrange — بازه عدد روزانه\n"
-    "/setunit — نام واحد امتیاز\n"
-    "/setmsgpoints — امتیاز هر پیام\n"
-    "/addrank , /delrank , /resetranks — مدیریت رتبه‌ها\n"
-    "/settext , /texts — شخصی‌سازی متن‌ها\n"
-    "/give , /take , /setbalance — مدیریت موجودی\n"
-    "/syncall — هماهنگ‌سازی دسترسی‌ها\n\n"
-    "<b>دستورات مالک بات:</b>\n"
-    "/promote , /demote , /botadmins — ادمین‌های بات 🏅\n"
-    "/activate , /deactivate — فعال‌سازی کاربران 🔑\n"
-    "/addad , /ads , /delad , /adtoggle — مدیریت تبلیغ‌ها 📣\n"
-    "/adinterval , /adnow — زمان‌بندی تبلیغ ⏱\n\n"
-    "💡 <i>ادمین بات کسی است که مالک بات با دستور /promote در گروه ترفیعش داده باشد.</i>"
+# --------------------------------------------------------------- صفحات راهنما
+# قالب ثابت هر خط: <code>/دستور</code> — توضیح کوتاه (عبارت فارسی معادل)
+
+HELP_INTRO = (
+    "📚 <b>راهنمای بات عاقبت</b>\n"
+    "یک دسته را انتخاب کن تا لیست کاملش را ببینی:\n\n"
+    "⚙️ تنظیمات گروه را با /settings داخل گروه باز کن."
 )
+
+HELP_GAME = (
+    "🎮 <b>بازی و سرگرمی</b>\n\n"
+    "<code>/start</code> — شروع و خوشامد\n"
+    "<code>/daily</code> — عاقبت روزانه 🎲 (عاقبت)\n"
+    "<code>/me</code> — کارنامه و موجودی من 📊\n"
+    "<code>/top</code> — جدول برترین‌ها 🏆 (برترین‌ها)\n"
+    "<code>/active</code> — فعال‌ترین اعضا 💬 (فعال‌ترین‌ها)\n"
+    "<code>/ranks</code> — نردبان رتبه‌ها 🪜 (رتبه‌ها)\n"
+    "<code>/tasks</code> — تسک‌ها و جایزه‌ها 🎯 (تسک‌ها)\n"
+    "<code>/history</code> — تاریخچه تغییرات من 🧾 (تاریخچه)\n"
+    "<code>/dice</code> — شرط‌بندی شانسی 🎰 (شرط)\n"
+    "<code>/fal</code> — فال روزانه 🔮 (فال)\n"
+    "<code>/gift</code> — هدیه دادن به دوستان 🎁"
+)
+
+HELP_ADMIN = (
+    "🛠 <b>مدیریت گروه</b>\n\n"
+    "<code>/settings</code> — پنل تنظیمات ⚙️ (تنظیمات)\n"
+    "<code>/setrange</code> — بازه عدد روزانه\n"
+    "<code>/setunit</code> — نام و ایموجی واحد امتیاز\n"
+    "<code>/setmsgpoints</code> — امتیاز هر پیام\n"
+    "<code>/toggle</code> — روشن/خاموش کردن قابلیت‌ها (سوییچ)\n"
+    "<code>/addrank</code> — افزودن رتبه جدید\n"
+    "<code>/delrank</code> — حذف یک رتبه\n"
+    "<code>/resetranks</code> — بازگشت رتبه‌ها به پیش‌فرض\n"
+    "<code>/settext</code> — تنظیم متن دلخواه\n"
+    "<code>/deltext</code> — بازگرداندن متن به پیش‌فرض\n"
+    "<code>/texts</code> — لیست کلیدهای متن\n"
+    "<code>/give</code> — دادن امتیاز به کاربر (بده)\n"
+    "<code>/take</code> — گرفتن امتیاز از کاربر (بگیر)\n"
+    "<code>/setbalance</code> — تنظیم مستقیم موجودی\n"
+    "<code>/syncall</code> — هماهنگ‌سازی دسترسی همه اعضا\n"
+    "<code>/botadmins</code> — لیست ادمین‌های بات (ادمین‌های بات)\n\n"
+    "💡 این دستورها فقط برای <b>ادمین‌های بات</b> گروه کار می‌کند."
+)
+
+HELP_OWNER = (
+    "👑 <b>مالک بات</b>\n\n"
+    "<code>/promote</code> — ترفیع کاربر به ادمین بات 🏅 (تنظیم ادمین)\n"
+    "<code>/demote</code> — عزل ادمین بات 📉\n"
+    "<code>/botadmins</code> — لیست ادمین‌های بات\n"
+    "<code>/activate</code> — فعال‌سازی کاربر 🔑 (فعالسازی)\n"
+    "<code>/deactivate</code> — غیرفعال‌سازی کاربر ⛔️\n"
+    "<code>/addad</code> — افزودن تبلیغ 📣\n"
+    "<code>/ads</code> — لیست تبلیغ‌ها 🗂\n"
+    "<code>/delad</code> — حذف تبلیغ 🗑\n"
+    "<code>/adtoggle</code> — فعال/غیرفعال کردن تبلیغ 🔄\n"
+    "<code>/adinterval</code> — فاصله ارسال خودکار تبلیغ ⏱\n"
+    "<code>/adnow</code> — ارسال فوری تبلیغ 🚀\n"
+    "<code>/addtask</code> — افزودن تسک جایزه‌دار 🎯\n"
+    "<code>/tasklist</code> — لیست همه تسک‌ها\n"
+    "<code>/deltask</code> — حذف تسک\n"
+    "<code>/toggletask</code> — فعال/غیرفعال کردن تسک 🔄\n"
+    "<code>/stats</code> — آمار کلی بات 📊 (آمار)\n"
+    "<code>/broadcast</code> — پیام همگانی به گروه‌ها 📢\n\n"
+    "⚠️ همه دستورات مالک فقط با آیدی مالک کار می‌کنند."
+)
+
+HELP_PAGES: dict[str, str] = {"game": HELP_GAME, "admin": HELP_ADMIN, "owner": HELP_OWNER}
+
+
+def _help_main_markup() -> InlineKeyboardMarkup:
+    """دکمه‌های دسته‌بندی صفحه اصلی راهنما."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🎮 بازی و سرگرمی", callback_data="help:game")],
+            [InlineKeyboardButton(text="🛠 مدیریت گروه", callback_data="help:admin")],
+            [InlineKeyboardButton(text="👑 مالک بات", callback_data="help:owner")],
+        ]
+    )
+
+
+def _help_back_markup() -> InlineKeyboardMarkup:
+    """دکمه بازگشت زیر هر دسته راهنما."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 بازگشت", callback_data="help:main")]
+        ]
+    )
 
 
 async def promo_reply_markup(bot: Bot, config: Config) -> InlineKeyboardMarkup:
@@ -112,13 +176,34 @@ async def cmd_start(message: Message, db: Database, config: Config) -> None:
 @router.message(Command("help", "rahnama"))
 @router.message(F.text.in_({"راهنما", "کمک"}))
 async def cmd_help(message: Message) -> None:
-    """نمایش راهنمای کامل."""
-    await message.reply(HELP_TEXT)
+    """صفحه اصلی راهنما با دکمه‌های دسته‌بندی (بدون سد دسترسی)."""
+    await message.reply(HELP_INTRO, reply_markup=_help_main_markup())
 
 
 @router.callback_query(F.data == "help")
-async def cb_help(call) -> None:  # noqa: ANN001 - نوع CallbackQuery در ایمپورت بالا
-    """راهنما از طریق دکمه شیشه‌ای."""
+async def cb_help(call: CallbackQuery) -> None:
+    """راهنما از طریق دکمه شیشه‌ای قدیمی؛ صفحه اصلی را پیام تازه می‌فرستد."""
     if call.message is not None:
-        await call.message.answer(HELP_TEXT)
+        await call.message.answer(HELP_INTRO, reply_markup=_help_main_markup())
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("help:"))
+async def cb_help_category(call: CallbackQuery) -> None:
+    """نمایش دسته‌های راهنما با ویرایش همان پیام (بدون پیام جدید)."""
+    if call.data is None or not isinstance(call.message, Message):
+        await call.answer()
+        return
+    page = call.data.split(":", 1)[1]
+    if page == "main":
+        text, markup = HELP_INTRO, _help_main_markup()
+    elif page in HELP_PAGES:
+        text, markup = HELP_PAGES[page], _help_back_markup()
+    else:
+        await call.answer()
+        return
+    try:
+        await call.message.edit_text(text, reply_markup=markup)
+    except Exception:  # noqa: BLE001 - ویرایش تکراری یا پیام قدیمی حیاتی نیست
+        pass
     await call.answer()

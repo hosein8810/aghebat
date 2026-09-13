@@ -1,8 +1,6 @@
 """دستورات ادمین گروه: تنظیمات، متن‌ها، رتبه‌ها و مدیریت موجودی."""
 from __future__ import annotations
 
-import json
-
 from aiogram import Bot, Router
 from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
@@ -47,40 +45,6 @@ async def _guard(message: Message, db: Database, config: Config) -> bool:
         "ادمین بات کسی است که مالک بات با دستور <code>/promote</code> ترفیعش داده."
     )
     return False
-
-
-@router.message(Command("settings", "panel"))
-async def cmd_settings(message: Message, bot: Bot, db: Database, config: Config) -> None:
-    """نمایش تنظیمات فعلی گروه."""
-    if not await _guard(message, db, config):
-        return
-    chat = await db.ensure_chat(message.chat.id, message.chat.title or "")
-    ranks = await load_ranks(db, message.chat.id)
-    members = await db.member_count(message.chat.id)
-    lines = [
-        f"⚙️ <b>تنظیمات عاقبت — {safe(chat['title'])}</b>",
-        "",
-        f"وضعیت: {'✅ فعال' if chat['enabled'] else '⛔️ خاموش'}",
-        f"واحد: {chat['unit_emoji']} <b>{safe(chat['unit_name'])}</b>",
-        f"بازه روزانه: <b>{int(chat['daily_min'])}</b> تا <b>{int(chat['daily_max'])}</b>",
-        f"امتیاز هر پیام: <b>{int(chat['msg_points'])}</b> (کول‌داون {int(chat['msg_cooldown'])} ثانیه)",
-        f"اعمال دسترسی‌ها: {'✅' if chat['enforce_ranks'] else '❌'}",
-        f"حالت فان: {'✅' if chat['fun_mode'] else '❌'}",
-        f"تعداد رتبه‌ها: <b>{len(ranks)}</b> | اعضای ثبت‌شده: <b>{members}</b>",
-        "",
-        "<b>دستورات:</b>",
-        "<code>/setrange -5 20</code> — بازه عدد روزانه",
-        "<code>/setunit سکه 🪙</code> — نام و ایموجی واحد",
-        "<code>/setmsgpoints 1 30</code> — امتیاز پیام و کول‌داون",
-        "<code>/toggle enforce</code> — روشن/خاموش کردن اعمال دسترسی",
-        "<code>/toggle fun</code> — روشن/خاموش کردن حالت فان",
-        "<code>/toggle bot</code> — فعال/غیرفعال کردن بات در گروه",
-        "<code>/addrank</code> , <code>/delrank</code> , <code>/resetranks</code>",
-        "<code>/settext</code> , <code>/texts</code> — شخصی‌سازی متن‌ها",
-        "<code>/give</code> , <code>/take</code> , <code>/setbalance</code>",
-        "<code>/syncall</code> — هماهنگ‌سازی دسترسی همه اعضا",
-    ]
-    await message.reply("\n".join(lines))
 
 
 @router.message(Command("setrange"))

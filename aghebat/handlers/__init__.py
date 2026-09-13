@@ -3,13 +3,14 @@ from __future__ import annotations
 
 from aiogram import Router
 
-from . import admin, ads, botadmin, common, daily, fun, group, owner, profile, tasks
+from . import admin, ads, botadmin, common, daily, fun, group, owner, panels, profile, tasks
 
 
 def build_router() -> Router:
     """روتر اصلی با ترتیب درست هندلرها."""
     router = Router(name="aghebat")
     router.include_router(common.router)
+    router.include_router(panels.router)
     router.include_router(daily.router)
     router.include_router(profile.router)
     router.include_router(tasks.router)

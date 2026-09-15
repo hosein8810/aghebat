@@ -37,6 +37,8 @@ PUBLIC_GROUP_COMMANDS: list[BotCommand] = [
     BotCommand(command="dice", description="شرط‌بندی شانسی 🎰"),
     BotCommand(command="fal", description="فال روزانه 🔮"),
     BotCommand(command="gift", description="هدیه دادن امتیاز به دوستان 🎁"),
+    BotCommand(command="ttt", description="بازی دوز ❌⭕️"),
+    BotCommand(command="rates", description="نرخ ارز و طلا 💱"),
     BotCommand(command="help", description="راهنمای بات 📚"),
     BotCommand(command="settings", description="پنل تنظیمات گروه ⚙️"),
 ]
@@ -44,6 +46,7 @@ PUBLIC_GROUP_COMMANDS: list[BotCommand] = [
 # دستورهای چت خصوصی؛ بات خصوصی فقط برای فعال‌سازی و راهنماست.
 PRIVATE_COMMANDS: list[BotCommand] = [
     BotCommand(command="start", description="شروع کار با بات 🌱"),
+    BotCommand(command="rates", description="نرخ ارز و طلا 💱"),
     BotCommand(command="help", description="راهنمای بات 📚"),
 ]
 
@@ -66,6 +69,8 @@ _OWNER_EXTRA_COMMANDS: list[BotCommand] = [
     BotCommand(command="toggletask", description="فعال/غیرفعال کردن تسک 🔄"),
     BotCommand(command="stats", description="آمار کلی بات 📊"),
     BotCommand(command="broadcast", description="پیام همگانی به گروه‌ها 📢"),
+    BotCommand(command="export", description="خروجی تنظیمات گروه 📤"),
+    BotCommand(command="import", description="بارگذاری تنظیمات 📥"),
 ]
 
 # چت خصوصی مالک: همه دستورها (عمومی + ویژه مالک).

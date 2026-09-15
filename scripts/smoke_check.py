@@ -1,8 +1,9 @@
 """بررسی دودی (Smoke Test) عاقبت — بدون اتصال به تلگرام.
 
 جداول و متدهای جدید دیتابیس را روی یک فایل موقت آزمایش می‌کند، ترجمه
-عبارت‌های فارسی را با فیلتر واقعی Command در aiogram می‌سنجد و در پایان
-روترها و لیست منوی دستورها را بررسی می‌کند.
+عبارت‌های فارسی را با فیلتر واقعی Command در aiogram می‌سنجد، نرخ‌های بازار را
+روی یک فیکسچر آفلاین (بدون شبکه) تبدیل و قالب‌بندی می‌کند و در پایان روترها و
+لیست منوی دستورها را بررسی می‌کند.
 اجرا: python scripts/smoke_check.py
 """
 from __future__ import annotations
@@ -82,6 +83,121 @@ async def check_db(tmp: str) -> None:
     await db.close()
 
 
+async def check_config_io(tmp: str) -> None:
+    """خروجی، اعتبارسنجی و بارگذاری تنظیمات گروه روی دیتابیس موقت."""
+    import json
+
+    from aghebat.services.config_io import (
+        apply_config_import,
+        build_config_export,
+        validate_config_import,
+    )
+
+    db = Database(Path(tmp) / "config_io.db")
+    await db.connect()
+
+    source, target = -1001, -1002
+    await db.ensure_chat(source, "گروه مبدأ")
+    await db.ensure_chat(target, "گروه مقصد")
+
+    # ۱) تنظیمات غیرپیش‌فرض + دو رتبه سفارشی + یک متن بازنویسی‌شده روی مبدأ.
+    for field, value in (
+        ("unit_name", "سکه"),
+        ("unit_emoji", "🪙"),
+        ("daily_min", -3),
+        ("daily_max", 12),
+        ("msg_points", 2),
+        ("msg_cooldown", 45),
+        ("enforce_ranks", 0),
+        ("fun_mode", 0),
+    ):
+        await db.set_chat_field(source, field, value)
+    await db.execute("DELETE FROM ranks WHERE chat_id = ?", (source,))
+    await db.add_rank(source, "برنز", "🥉", 0, {"can_send_messages": True})
+    await db.add_rank(
+        source, "نقره", "🥈", 500, {"can_send_messages": True, "can_send_photos": True}
+    )
+    await db.set_text(source, "daily_gain", "متن سفارشی {amount}")
+
+    # مقصد: عنوان/وضعیت متفاوت + موجودی عضوی که نباید دست بخورد.
+    await db.set_chat_field(target, "enabled", 0)
+    await db.ensure_member(target, 42, "کاربر آزمایشی")
+    await db.add_balance(target, 42, 100, "seed")
+
+    # ۲) ساختار فایل خروجی.
+    export = await build_config_export(db, source)
+    assert export["aghebat_config"] == 1 and export["version"] == 1, export
+    assert export["source_chat_id"] == source
+    assert isinstance(export["exported_at"], int) and export["exported_at"] > 0
+    assert export["settings"] == {
+        "unit_name": "سکه",
+        "unit_emoji": "🪙",
+        "daily_min": -3,
+        "daily_max": 12,
+        "msg_points": 2,
+        "msg_cooldown": 45,
+        "enforce_ranks": 0,
+        "fun_mode": 0,
+    }, export["settings"]
+    assert "title" not in export["settings"] and "enabled" not in export["settings"]
+    assert [r["title"] for r in export["ranks"]] == ["برنز", "نقره"], export["ranks"]
+    assert [r["min_balance"] for r in export["ranks"]] == [0, 500]
+    assert export["ranks"][1]["perms"] == {
+        "can_send_messages": True,
+        "can_send_photos": True,
+    }, export["ranks"][1]["perms"]
+    assert export["texts"] == {"daily_gain": "متن سفارشی {amount}"}, export["texts"]
+
+    # ۳) اعتبارسنجی فایل سالم؛ کلیدهای اضافه باید نادیده گرفته شوند.
+    assert validate_config_import(export) == [], validate_config_import(export)
+    extra = dict(export)
+    extra["unknown_top"] = "نادیده"
+    extra["settings"] = {**export["settings"], "unknown_setting": 5}
+    assert validate_config_import(extra) == [], validate_config_import(extra)
+
+    # ۴) اعمال روی مقصد: تنظیمات، رتبه‌ها و متن منتقل شوند.
+    summary = await apply_config_import(db, target, export)
+    assert summary == {"settings": 8, "ranks": 2, "texts": 1}, summary
+
+    row = await db.get_chat(target)
+    assert row is not None
+    for field, expected in export["settings"].items():
+        assert row[field] == expected, (field, row[field], expected)
+    assert row["title"] == "گروه مقصد", "عنوان گروه مقصد نباید عوض شود"
+    assert int(row["enabled"]) == 0, "وضعیت روشن/خاموش گروه مقصد نباید عوض شود"
+
+    target_ranks = await db.ranks(target)
+    assert [r["title"] for r in target_ranks] == ["برنز", "نقره"], target_ranks
+    assert [int(r["min_balance"]) for r in target_ranks] == [0, 500]
+    assert json.loads(target_ranks[1]["perms"]) == {
+        "can_send_messages": True,
+        "can_send_photos": True,
+    }, target_ranks[1]["perms"]
+    assert await db.all_texts(target) == {"daily_gain": "متن سفارشی {amount}"}
+    member = await db.get_member(target, 42)
+    assert member is not None and int(member["balance"]) == 100, "موجودی اعضا نباید عوض شود"
+
+    # ۵) فایل خراب: نوع اشتباه + مقدار منفی + رتبه بدون عنوان + کلید ناشناخته.
+    bad = {
+        "aghebat_config": 1,
+        "version": 1,
+        "settings": {"daily_min": "خیلی", "daily_max": 5, "msg_points": -1},
+        "ranks": [{"emoji": "⭐️", "min_balance": 0, "perms": {"bogus_perm": True}}],
+        "texts": {"nope_key": "x"},
+    }
+    errors = validate_config_import(bad)
+    assert len(errors) >= 4, errors
+    assert all(isinstance(e, str) and e.startswith("❌") for e in errors), errors
+    assert any("عدد" in e for e in errors), errors
+    assert any("منفی" in e for e in errors), errors
+    assert any("عنوان" in e for e in errors), errors
+    assert any("ناشناخته" in e for e in errors), errors
+    assert validate_config_import([]) != [], "ورودی غیرشیء باید رد شود"
+
+    await db.close()
+    print(f"خروجی/بارگذاری تنظیمات: OK ({summary})")
+
+
 def check_routers() -> None:
     """روترهای هندلر (از جمله panels) با ترتیب درست ساخته می‌شوند؟"""
     from aghebat.handlers import build_router
@@ -89,12 +205,16 @@ def check_routers() -> None:
     router = build_router()
     names = [r.name for r in router.sub_routers]
     for expected in (
-        "common", "panels", "daily", "profile", "tasks",
-        "admin", "owner", "botadmin", "ads", "fun", "group",
+        "common", "panels", "configio", "daily", "profile", "tasks",
+        "admin", "owner", "botadmin", "ads", "market", "tictactoe", "fun", "group",
     ):
         assert expected in names, f"روتر {expected} ثبت نشده است: {names}"
     assert names.index("panels") == names.index("common") + 1, names
+    assert names.index("configio") == names.index("panels") + 1, names
     assert names.index("owner") < names.index("botadmin") < names.index("ads") < names.index("fun"), names
+    assert names.index("ads") < names.index("market") < names.index("fun"), names
+    # دوز درست بعد از بازار و قبل از سرگرمی می‌نشیند.
+    assert names.index("market") < names.index("tictactoe") < names.index("fun"), names
     print("روترها:", " -> ".join(names))
 
 
@@ -111,6 +231,9 @@ def check_aliases() -> None:
     assert resolve_alias("سلام") is None
     assert resolve_alias("ارسال تبلیغ") == ("/adnow", "")
     assert resolve_alias("تنظیمات") == ("/settings", "")
+    assert resolve_alias("خروجی تنظیمات") == ("/export", "")
+    assert resolve_alias("بارگذاری تنظیمات") == ("/import", "")
+    assert resolve_alias("دوز") == ("/ttt", ""), resolve_alias("دوز")
     # طولانی‌ترین عبارت اول: «سوییچ تبلیغ» نباید «/toggle تبلیغ» شود.
     assert resolve_alias("سوییچ تبلیغ") == ("/adtoggle", "")
     # فاصله‌های اضافه و متن خالی
@@ -199,15 +322,144 @@ def check_menu() -> None:
     assert public_names <= owner_names, "لیست مالک باید شامل لیست عمومی باشد"
     assert private_names <= owner_names, "لیست مالک باید شامل لیست خصوصی باشد"
     assert len(owner_names) == len(OWNER_COMMANDS), "دستور تکراری در لیست مالک"
+    # نرخ‌ها هم در منوی عمومی گروه و هم در چت خصوصی هست.
+    assert "rates" in public_names and "rates" in private_names, (public_names, private_names)
+
+    # هر صفحه راهنما باید یک دکمه در صفحه اصلی داشته باشد (و برعکس).
+    from aghebat.handlers.common import HELP_PAGES, _help_main_markup
+
+    callbacks = {
+        button.callback_data
+        for row in _help_main_markup().inline_keyboard
+        for button in row
+    }
+    assert callbacks == {f"help:{key}" for key in HELP_PAGES}, callbacks
+    assert callbacks == {"help:game", "help:admin", "help:owner", "help:tools"}, callbacks
     print(f"منوی دستورها: عمومی={len(public_names)} مالک={len(owner_names)} OK")
+
+
+# نمونه پاسخ واقعی منبع نرخ‌ها (شکل کلیدها عیناً مثل bonbast) — آزمون بدون شبکه.
+_MARKET_FIXTURE = {
+    "usd1": "231500",
+    "usd2": "231400",
+    "eur1": "268600",
+    "eur2": "268400",
+    "emami1": "235000000",
+    "emami12": "231000000",
+    "ounce": "4348.78",
+    "bitcoin": "76811.72",
+    "bourse": "1904324.2",
+    "last_modified": "September 13, 2026 12:26",
+}
+
+
+def check_market() -> None:
+    """تفسیر و قالب‌بندی نرخ‌ها: تبدیل ریال به تومان و استثناهای جهانی."""
+    from aghebat.aliases import resolve_alias
+    from aghebat.services.market import format_market, parse_market_payload
+
+    snapshot = parse_market_payload(_MARKET_FIXTURE)
+    sell, buy = snapshot["currencies"]["usd"]
+    assert (sell, buy) == (231500, 231400), (sell, buy)
+    assert sell // 10 == 23150, sell
+    assert snapshot["currencies"]["eur"] == (268600, 268400)
+    emami = snapshot["gold"]["emami"]
+    assert isinstance(emami, tuple) and emami[0] // 10 == 23500000, emami
+    assert emami == (235000000, 231000000), emami
+    assert snapshot["last_modified"] == "September 13, 2026 12:26"
+
+    # استثناها: انس و بیت‌کوین دلاری و بورس شاخص می‌مانند، بر ۱۰ تقسیم نمی‌شوند.
+    assert snapshot["globals"]["ounce"] == 4348.78
+    assert snapshot["globals"]["bitcoin"] == 76811.72
+    assert snapshot["globals"]["bourse"] == 1904324.2
+
+    text = format_market(snapshot)
+    for header in ("💱 <b>ارز</b>", "🪙 <b>طلا و سکه</b>", "🌍 <b>جهانی</b>"):
+        assert header in text, text
+    assert "23,150 × 23,140 تومان" in text, text
+    assert "23,500,000" in text, text
+    assert "235,000,000" not in text, "ارزش ریالی نباید بدون تبدیل نمایش داده شود"
+    assert "4,348.78 دلار" in text, text
+    assert "434.878" not in text, "انس طلا نباید بر ۱۰ تقسیم شود"
+    assert "76,811.72 دلار" in text, text
+    assert "1,904,324.2 واحد" in text, text
+    assert "تبدیل شده‌اند" in text, text
+    assert "<i>به‌روزرسانی: September 13, 2026 12:26</i>" in text, text
+
+    # کلیدهای غایب ساخته نمی‌شوند.
+    assert "gbp" not in snapshot["currencies"], snapshot["currencies"]
+    assert "mithqal" not in snapshot["gold"], snapshot["gold"]
+    assert parse_market_payload({})["currencies"] == {}
+
+    assert resolve_alias("ارز") == ("/rates", ""), resolve_alias("ارز")
+    assert resolve_alias("نرخ ارز") == ("/rates", ""), resolve_alias("نرخ ارز")
+    assert resolve_alias("قیمت طلا") == ("/rates", ""), resolve_alias("قیمت طلا")
+    assert resolve_alias("طلا") == ("/rates", ""), resolve_alias("طلا")
+    print("نرخ بازار (فیکسچر آفلاین): OK")
+
+
+def check_tictactoe() -> None:
+    """موتور دوز: برد سطر/ستون/قطر، مساوی، حرکت بات و پایان بازی بات-به-بات."""
+    from aghebat.services import tictactoe as ttt
+
+    assert ttt.new_board() == [""] * 9
+
+    # برد در سطر، ستون و قطر.
+    assert ttt.winner(["X", "X", "X", "", "O", "", "O", "", ""]) == "X"
+    assert ttt.winner(["O", "X", "", "O", "X", "", "O", "", ""]) == "O"
+    assert ttt.winner(["X", "O", "", "", "X", "O", "", "", "X"]) == "X"
+
+    # وسط بازی هنوز برنده‌ای نیست.
+    mid = ["X", "", "", "", "O", "", "", "", ""]
+    assert ttt.winner(mid) is None
+    assert ttt.empty_cells(mid) == [1, 2, 3, 5, 6, 7, 8], ttt.empty_cells(mid)
+    assert not ttt.is_full(mid)
+
+    # صفحه پر و مساوی: هیچ خطی صاحب ندارد.
+    draw = ["X", "O", "X", "X", "O", "O", "O", "X", "X"]
+    assert ttt.winner(draw) is None and ttt.is_full(draw)
+    assert ttt.empty_cells(draw) == []
+
+    # بهترین حرکت همیشه روی یک خانه خالی می‌نشیند.
+    board = ttt.new_board()
+    board[0], board[4] = "X", "O"
+    for _ in range(20):
+        assert ttt.best_move(board, "O") in ttt.empty_cells(board)
+
+    # با خاموش‌کردن تصادف، بات برد فوری می‌زند و جلوی برد حریف را می‌گیرد.
+    assert ttt.best_move(["O", "O", "", "X", "X", "", "", "", ""], "O", 0.0) == 2
+    assert ttt.best_move(["X", "X", "", "", "O", "", "", "", ""], "O", 0.0) == 2
+
+    # بازی بات-به-بات باید تمام شود و حالت پایانی معتبر بدهد.
+    board = ttt.new_board()
+    for index in range(9):
+        if ttt.winner(board) is not None or ttt.is_full(board):
+            break
+        mark = ("X", "O")[index % 2]
+        board[ttt.best_move(board, mark)] = mark
+    final = ttt.winner(board)
+    assert final in {"X", "O", None}, final
+    assert final is not None or ttt.is_full(board), board
+
+    # صفحه پر برای بات خطاست.
+    try:
+        ttt.best_move(draw, "X")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("حرکت روی صفحه پر باید خطا بدهد")
+    print("موتور دوز: OK")
 
 
 async def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         await check_db(tmp)
+        await check_config_io(tmp)
     check_routers()
     check_aliases()
     check_menu()
+    check_market()
+    check_tictactoe()
     bot = Bot(token="123456:TEST-TOKEN")
     try:
         await check_alias_rewrite(bot)

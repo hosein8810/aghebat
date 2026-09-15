@@ -38,7 +38,8 @@ HELP_GAME = (
     "<code>/history</code> — تاریخچه تغییرات من 🧾 (تاریخچه)\n"
     "<code>/dice</code> — شرط‌بندی شانسی 🎰 (شرط)\n"
     "<code>/fal</code> — فال روزانه 🔮 (فال)\n"
-    "<code>/gift</code> — هدیه دادن به دوستان 🎁"
+    "<code>/gift</code> — هدیه دادن به دوستان 🎁\n"
+    "<code>/ttt</code> — بازی دوز با بات یا دوست ❌⭕️ (دوز)"
 )
 
 HELP_ADMIN = (
@@ -80,11 +81,25 @@ HELP_OWNER = (
     "<code>/deltask</code> — حذف تسک\n"
     "<code>/toggletask</code> — فعال/غیرفعال کردن تسک 🔄\n"
     "<code>/stats</code> — آمار کلی بات 📊 (آمار)\n"
-    "<code>/broadcast</code> — پیام همگانی به گروه‌ها 📢\n\n"
+    "<code>/broadcast</code> — پیام همگانی به گروه‌ها 📢\n"
+    "<code>/export</code> — خروجی تنظیمات گروه 📤 (خروجی تنظیمات)\n"
+    "<code>/import</code> — بارگذاری تنظیمات 📥 (بارگذاری تنظیمات)\n\n"
+    "💡 خروجی گرفتن از تنظیمات یک گروه و اعمال همان تنظیمات روی گروه دیگر.\n\n"
     "⚠️ همه دستورات مالک فقط با آیدی مالک کار می‌کنند."
 )
 
-HELP_PAGES: dict[str, str] = {"game": HELP_GAME, "admin": HELP_ADMIN, "owner": HELP_OWNER}
+HELP_TOOLS = (
+    "🧰 <b>ابزارها</b>\n\n"
+    "💱 <b>نرخ ارز و طلا</b>\n"
+    "<code>/rates</code> — نرخ لحظه‌ای ارز، طلا و سکه (به تومان) (ارز)\n"
+)
+
+HELP_PAGES: dict[str, str] = {
+    "game": HELP_GAME,
+    "admin": HELP_ADMIN,
+    "owner": HELP_OWNER,
+    "tools": HELP_TOOLS,
+}
 
 
 def _help_main_markup() -> InlineKeyboardMarkup:
@@ -94,6 +109,7 @@ def _help_main_markup() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🎮 بازی و سرگرمی", callback_data="help:game")],
             [InlineKeyboardButton(text="🛠 مدیریت گروه", callback_data="help:admin")],
             [InlineKeyboardButton(text="👑 مالک بات", callback_data="help:owner")],
+            [InlineKeyboardButton(text="🧰 ابزارها", callback_data="help:tools")],
         ]
     )
 
